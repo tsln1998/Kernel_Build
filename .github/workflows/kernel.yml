@@ -1,0 +1,119 @@
+name: Kernel
+on:
+  watch:
+    types: [started]
+
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Kernel by ${{ github.actor }}
+    runs-on: ubuntu-22.04
+    if: github.event.repository.owner.id == github.event.sender.id
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: LoadEnv
+        id: env
+        uses: duskmoon314/action-load-env@v1
+        with:
+          files: |
+            .env
+            env
+
+      - name: Generate Cache Key 
+        run: |
+          echo "$KERNEL_SOURCE $KERNEL_BRANCH" > .cache-key
+
+      - name: Cache
+        id: cached
+        uses: actions/cache@v3
+        with:
+          path: ${{ github.workspace }}/cached
+          key: Cache-${{ hashFiles('.cache-key') }}
+
+      - name: Prepare
+        run: |
+          mkdir $GITHUB_WORKSPACE/cached 2>/dev/null || true
+
+          echo "BUILD_TIME=$(TZ=Asia/Shanghai date "+%Y%m%d%H%M")" >> $GITHUB_ENV
+          
+          echo "LCACHE_DIR=$GITHUB_WORKSPACE/cached" >> $GITHUB_ENV
+          echo "CCACHE_DIR=$GITHUB_WORKSPACE/cached/ccache" >> $GITHUB_ENV
+
+          echo "PREBUILTS_CLANG_PATH=$(pwd)/clang-aosp" >> $GITHUB_ENV
+          echo "PREBUILTS_GCC_AOSP_PATH=$(pwd)/gcc-aosp" >> $GITHUB_ENV
+          echo "PREBUILTS_LIBUFDT_PATH=$(pwd)/libufdt" >> $GITHUB_ENV
+
+      - name: Install system packages
+        run: |
+          sudo apt update >/dev/null 2>/dev/null
+          sudo apt install -y $(cat .syspkgs)
+
+      - name: Install AOSP prebuilts
+        run: |
+          _fetch_unpack_tgz() {
+              [ ! -f $2 ] && curl -L $1 -o $2
+              [ ! -d $3 ] && mkdir -p $3
+              tar -C $3 -zxvf $2
+          }
+          _fetch_unpack_tgz $PACKAGE_CLANG $LCACHE_DIR/clang-$(basename $PACKAGE_CLANG) $PREBUILTS_CLANG_PATH
+          _fetch_unpack_tgz $PACKAGE_GCC_AOSP $LCACHE_DIR/gcc-$(basename $PACKAGE_GCC_AOSP) $PREBUILTS_GCC_AOSP_PATH
+          _fetch_unpack_tgz $PACKAGE_LIBUFDT $LCACHE_DIR/libufdt-$(basename $PACKAGE_LIBUFDT) $PREBUILTS_LIBUFDT_PATH
+
+      - name: Download source
+        run: |
+          git clone $KERNEL_SOURCE -b $KERNEL_BRANCH kernel --depth=1
+
+      - name: Setup KernelSU
+        if: env.PATCH_KERNEL_SU == 'true'
+        run: |
+          cd ./kernel
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
+          echo "CONFIG_MODULES=y" >> arch/arm64/configs/$KERNEL_CONFIG
+          echo "CONFIG_KPROBES=y" >> arch/arm64/configs/$KERNEL_CONFIG
+          echo "CONFIG_HAVE_KPROBES=y" >> arch/arm64/configs/$KERNEL_CONFIG
+          echo "CONFIG_KPROBE_EVENTS=y" >> arch/arm64/configs/$KERNEL_CONFIG
+          echo "CONFIG_OVERLAY_FS=y" >> arch/arm64/configs/$KERNEL_CONFIG
+          echo "KERNEL_SUFFIX=$KERNEL_SUFFIX-KernelSU" >> $GITHUB_ENV
+
+      - name: Build kernel
+        run: |
+          cd ./kernel
+          export PATH="$PREBUILTS_CLANG_PATH/bin:$PATH"
+          # Build
+          for STEP in "$KERNEL_CONFIG" "";do
+            make -j$(nproc --all) \
+              O=out ARCH=arm64 \
+              CC="ccache clang" \
+              CLANG_TRIPLE=aarch64-linux-gnu- \
+              CROSS_COMPILE=$PREBUILTS_GCC_AOSP_PATH/bin/aarch64-linux-android- \
+              $KERNEL_BUILD_ARGS $STEP
+          done
+          # Check
+          test -f ./out/arch/arm64/boot/$KERNEL_OUT
+      
+      - name: Build Anykernel3
+        run: |
+          git clone https://github.com/osm0sis/AnyKernel3
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
+          sed -i 's!block=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!block=auto;!g' AnyKernel3/anykernel.sh
+          sed -i 's/is_slot_device=0;/is_slot_device=auto;/g' AnyKernel3/anykernel.sh
+          cp ./kernel/out/arch/arm64/boot/$KERNEL_OUT AnyKernel3/
+          rm -rf AnyKernel3/.git* AnyKernel3/README.md
+
+      - name: Build DTBO
+        if: env.KERNEL_NEED_DTBO == 'true'
+        env:
+          DTBO_IMG: ./kernel/out/arch/arm64/boot/dtbo.img
+        run: |
+          [ ! -f $DTBO_IMG ] && \
+            $PREBUILTS_LIBUFDT_PATH/utils/src/mkdtboimg.py create --page_size=4096 $DTBO_IMG $(find ./kernel/out/arch/arm64/boot/dts/ -name '*.dtbo')
+          cp $DTBO_IMG AnyKernel3/
+
+      - name: Upload AnyKernel3
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ env.KERNEL_NAME }}${{ env.KERNEL_SUFFIX }}-${{ env.BUILD_TIME }}
+          path: AnyKernel3/*
