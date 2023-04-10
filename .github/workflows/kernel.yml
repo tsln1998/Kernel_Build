@@ -70,7 +70,14 @@ jobs:
         if: env.PATCH_KERNEL_SU == 'true'
         run: |
           cd ./kernel
-          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
+          # fetch source
+          rm -rf KernelSU 2>/dev/null || true
+          git clone https://github.com/tiann/KernelSU
+          # checkout latest version
+          git -C KernelSU checkout $(git -C KernelSU log --tags --simplify-by-decoration --pretty=format:"%H" -1)
+          sed -i '/^git.*pull$/d' ./KernelSU/kernel/setup.sh
+          # automatic patch
+          bash ./KernelSU/kernel/setup.sh
           echo "CONFIG_MODULES=y" >> arch/arm64/configs/$KERNEL_CONFIG
           echo "CONFIG_KPROBES=y" >> arch/arm64/configs/$KERNEL_CONFIG
           echo "CONFIG_HAVE_KPROBES=y" >> arch/arm64/configs/$KERNEL_CONFIG
