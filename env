@@ -1,0 +1,14 @@
+KERNEL_NAME="LineageOS"
+KERNEL_SOURCE=https://github.com/LineageOS/android_kernel_oneplus_sm8250
+KERNEL_BRANCH=lineage-20
+KERNEL_CONFIG=vendor/kona-perf_defconfig
+KERNEL_BUILD_ARGS="LLVM=1 LLVM_IAS=1"
+KERNEL_OUT=Image
+
+KERNEL_NEED_DTBO=false
+
+PATCH_KERNEL_SU=true
+
+PACKAGE_CLANG=https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master-kernel-build-2022/clang-r450784d.tar.gz
+PACKAGE_GCC_AOSP=https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/tags/android-13.0.0_r0.61.tar.gz
+PACKAGE_LIBUFDT=https://android.googlesource.com/platform/system/libufdt/+archive/refs/heads/android13-qpr2-s6-release.tar.gz
