@@ -21,16 +21,12 @@ jobs:
           files: |
             env
 
-      - name: Generate Cache Key 
-        run: |
-          echo "$KERNEL_SOURCE $KERNEL_BRANCH" > .cache-key
-
       - name: Cache
         id: cached
         uses: actions/cache@v3
         with:
           path: ${{ github.workspace }}/cached
-          key: Cache-${{ hashFiles('.cache-key') }}
+          key: Workspace
 
       - name: Prepare
         run: |
