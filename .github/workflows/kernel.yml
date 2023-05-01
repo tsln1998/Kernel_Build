@@ -11,66 +11,85 @@ jobs:
     runs-on: ubuntu-22.04
     if: github.event.repository.owner.id == github.event.sender.id
     steps:
-      - name: Checkout
+      - name: "checkout"
         uses: actions/checkout@v3
 
-      - name: LoadEnv
+      - name: "env::load"
         id: env
         uses: duskmoon314/action-load-env@v1
         with:
           files: |
             env
 
-      - name: Cache
-        id: cached
-        uses: actions/cache@v3
-        with:
-          path: ${{ github.workspace }}/cached
-          key: Workspace
-
-      - name: Prepare
-        run: |
-          echo "BUILD_TIME=$(TZ=Asia/Shanghai date "+%Y%m%d%H%M")" >> $GITHUB_ENV
-          
-          echo "CACHE_DIR=$GITHUB_WORKSPACE/cached" >> $GITHUB_ENV
-          echo "RELEASE_DIR=$GITHUB_WORKSPACE/release" >> $GITHUB_ENV
-
-          echo "PREBUILTS_CLANG_PATH=$(pwd)/clang-aosp" >> $GITHUB_ENV
-          echo "PREBUILTS_GCC_AOSP_PATH=$(pwd)/gcc-aosp" >> $GITHUB_ENV
-          echo "PREBUILTS_LIBUFDT_PATH=$(pwd)/libufdt" >> $GITHUB_ENV
-
-          echo "KBUILD_BUILD_HOST=Github" >> $GITHUB_ENV
-          echo "KBUILD_BUILD_USER=$(echo ${{ github.actor }} | tr A-Z a-z)" >> $GITHUB_ENV
-
-          # mkdir
-          source $GITHUB_ENV
-          mkdir $CACHE_DIR 2>/dev/null || true
-          mkdir $RELEASE_DIR 2>/dev/null || true
-
-          # ccache
-          echo "CCACHE_DIR=$CACHE_DIR/ccache" >> $GITHUB_ENV
-
-      - name: Install system packages
+      - name: "system::prepare"
         run: |
           sudo apt update >/dev/null 2>/dev/null
           sudo apt install -y $(cat .syspkgs)
 
-      - name: Install AOSP prebuilts
+      - name: "ccache::cache"
+        id: ccache
+        uses: actions/cache@v3
+        with:
+          path: ${{ github.workspace }}/ccache
+          key: ccache-${{ github.run_id }}
+          restore-keys: |
+            ccache
+      
+      - name: "ccache::prepare"
         run: |
+          echo "CCACHE_DIR=$GITHUB_WORKSPACE/ccache" >> $GITHUB_ENV
+        
+      - name: "ccache::setup"
+        if: steps.ccache.outputs.cache-hit != 'true'
+        run: |
+          ccache -M 1.5G
+
+      - name: "toolchains::cache"
+        id: toolchains
+        uses: actions/cache@v3
+        with:
+          path: ${{ github.workspace }}/toolchains
+          key: toolchains-${{ hashFiles('env') }}-${{ github.run_id }}
+          restore-keys: |
+            toolchains-${{ hashFiles('env') }}
+      
+      - name: "toolchains::prepare"
+        run: |
+          # setup path
+          echo "PREBUILTS_CLANG_PATH=$GITHUB_WORKSPACE/toolchains/clang" >> $GITHUB_ENV
+          echo "PREBUILTS_GCC_AOSP_PATH=$GITHUB_WORKSPACE/toolchains/gcc-aosp" >> $GITHUB_ENV
+          echo "PREBUILTS_LIBUFDT_PATH=$GITHUB_WORKSPACE/toolchains/libufdt" >> $GITHUB_ENV
+      
+      - name: "toolchains::setup"
+        if: steps.toolchains.outputs.cache-hit != 'true'
+        run: |
+          # create download path
+          PREBUILTS_DOWNLOAD_PATH=$GITHUB_WORKSPACE/download
+          mkdir -p $PREBUILTS_DOWNLOAD_PATH
+          
+          # download function
           _fetch_unpack_tgz() {
-              [ ! -f $2 ] && curl -L $1 -o $2
-              [ ! -d $3 ] && mkdir -p $3
+              curl -L $1 -o $2
+              mkdir -p $3
               tar -C $3 -zxvf $2
           }
-          _fetch_unpack_tgz $PACKAGE_CLANG $CACHE_DIR/clang-$(basename $PACKAGE_CLANG) $PREBUILTS_CLANG_PATH
-          _fetch_unpack_tgz $PACKAGE_GCC_AOSP $CACHE_DIR/gcc-$(basename $PACKAGE_GCC_AOSP) $PREBUILTS_GCC_AOSP_PATH
-          _fetch_unpack_tgz $PACKAGE_LIBUFDT $CACHE_DIR/libufdt-$(basename $PACKAGE_LIBUFDT) $PREBUILTS_LIBUFDT_PATH
+          
+          # invoke
+          _fetch_unpack_tgz $PACKAGE_CLANG $PREBUILTS_DOWNLOAD_PATH/$(basename $PACKAGE_CLANG) $PREBUILTS_CLANG_PATH
+          _fetch_unpack_tgz $PACKAGE_GCC_AOSP $PREBUILTS_DOWNLOAD_PATH/$(basename $PACKAGE_GCC_AOSP) $PREBUILTS_GCC_AOSP_PATH
+          _fetch_unpack_tgz $PACKAGE_LIBUFDT $PREBUILTS_DOWNLOAD_PATH/$(basename $PACKAGE_LIBUFDT) $PREBUILTS_LIBUFDT_PATH
 
-      - name: Download source
+      - name: "release::setup"
+        run: |
+          echo "KBUILD_BUILD_HOST=Github" >> $GITHUB_ENV
+          echo "KBUILD_BUILD_USER=$(echo ${{ github.actor }} | tr A-Z a-z)" >> $GITHUB_ENV
+          echo "BUILD_TIME=$(TZ=Asia/Shanghai date "+%Y%m%d%H%M")" >> $GITHUB_ENV
+
+      - name: "kernel::download"
         run: |
           git clone $KERNEL_SOURCE -b $KERNEL_BRANCH kernel --depth=1
 
-      - name: Download KernelSU
+      - name: "kernelsu::download"
         if: env.PATCH_KERNEL_SU == 'true'
         run: |
           cd ./kernel
@@ -86,7 +105,7 @@ jobs:
           git -C KernelSU checkout $(git -C KernelSU log --tags --simplify-by-decoration --pretty=format:"%H" -1)
           echo "KERNEL_SU_VERSION=$(git -C KernelSU tag -l --contains HEAD)" >> $GITHUB_ENV
 
-      - name: Patch KernelSU
+      - name: "kernelsu::patch"
         if: env.PATCH_KERNEL_SU == 'true'
         run: |
           cd ./kernel
@@ -100,7 +119,7 @@ jobs:
           echo "CONFIG_OVERLAY_FS=y" >> arch/arm64/configs/$KERNEL_CONFIG
           echo "KERNEL_SUFFIX=$KERNEL_SUFFIX-KernelSU-$KERNEL_SU_VERSION" >> $GITHUB_ENV
       
-      - name: Download Anykernel3
+      - name: "anykernel3::download"
         run: |
           # Clone AK3
           git clone https://github.com/osm0sis/AnyKernel3
@@ -109,9 +128,9 @@ jobs:
           sed -i 's/is_slot_device=0;/is_slot_device=auto;/g' AnyKernel3/anykernel.sh
           rm -rf AnyKernel3/.git* AnyKernel3/README.md
 
-          echo "AK3_DIR=$GITHUB_WORKSPACE/AnyKernel3" >> $GITHUB_ENV
+          echo "AK3_PATH=$GITHUB_WORKSPACE/AnyKernel3" >> $GITHUB_ENV
 
-      - name: Build kernel
+      - name: "kernel::build"
         run: |
           cd ./kernel
           export PATH="$PREBUILTS_CLANG_PATH/bin:$PATH"
@@ -127,20 +146,20 @@ jobs:
           done
 
           # Copy kernel image
-          cp ./out/arch/arm64/boot/$KERNEL_OUT $AK3_DIR/
+          cp ./out/arch/arm64/boot/$KERNEL_OUT $AK3_PATH/
 
-      - name: Build DTBO
+      - name: "dtbo::build"
         if: env.KERNEL_NEED_DTBO == 'true'
         run: |
           # Build
           [ ! -f ./kernel/out/arch/arm64/boot/dtbo.img ] && \
             $PREBUILTS_LIBUFDT_PATH/utils/src/mkdtboimg.py create --page_size=4096 ./kernel/out/arch/arm64/boot/dtbo.img $(find ./kernel/out/arch/arm64/boot/dts/ -name '*.dtbo')
           # Check
-          cp ./kernel/out/arch/arm64/boot/dtbo.img $AK3_DIR/
+          cp ./kernel/out/arch/arm64/boot/dtbo.img $AK3_PATH/
 
-      - name: Upload AnyKernel3
+      - name: "artifact::upload"
         uses: actions/upload-artifact@v3
         with:
           name: ${{ env.KERNEL_NAME }}${{ env.KERNEL_SUFFIX }}-${{ env.BUILD_TIME }}
-          path: AnyKernel3/*
+          path: ${{ env.AK3_PATH }}/*
 
