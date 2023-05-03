@@ -40,7 +40,6 @@ jobs:
           echo "CCACHE_DIR=$GITHUB_WORKSPACE/ccache" >> $GITHUB_ENV
         
       - name: "ccache::setup"
-        if: steps.ccache.outputs.cache-hit != 'true'
         run: |
           ccache -M 1.5G
 
@@ -61,7 +60,6 @@ jobs:
           echo "PREBUILTS_LIBUFDT_PATH=$GITHUB_WORKSPACE/toolchains/libufdt" >> $GITHUB_ENV
       
       - name: "toolchains::setup"
-        if: steps.toolchains.outputs.cache-hit != 'true'
         run: |
           # create download path
           PREBUILTS_DOWNLOAD_PATH=$GITHUB_WORKSPACE/download
@@ -69,9 +67,11 @@ jobs:
           
           # download function
           _fetch_unpack_tgz() {
-              curl -L $1 -o $2
-              mkdir -p $3
-              tar -C $3 -zxvf $2
+              if [ ! -d $3 ]; then
+                curl -L $1 -o $2
+                mkdir -p $3
+                tar -C $3 -zxvf $2
+              fi
           }
           
           # invoke
