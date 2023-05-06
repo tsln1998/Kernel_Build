@@ -40,7 +40,6 @@ jobs:
           echo "CCACHE_DIR=$GITHUB_WORKSPACE/ccache" >> $GITHUB_ENV
         
       - name: "ccache::setup"
-        if: steps.ccache.outputs.cache-hit != 'true'
         run: |
           ccache -M 1.5G
 
@@ -61,7 +60,6 @@ jobs:
           echo "PREBUILTS_LIBUFDT_PATH=$GITHUB_WORKSPACE/toolchains/libufdt" >> $GITHUB_ENV
       
       - name: "toolchains::setup"
-        if: steps.toolchains.outputs.cache-hit != 'true'
         run: |
           # create download path
           PREBUILTS_DOWNLOAD_PATH=$GITHUB_WORKSPACE/download
@@ -69,9 +67,11 @@ jobs:
           
           # download function
           _fetch_unpack_tgz() {
-              curl -L $1 -o $2
-              mkdir -p $3
-              tar -C $3 -zxvf $2
+              if [ ! -d $3 ]; then
+                curl -L $1 -o $2
+                mkdir -p $3
+                tar -C $3 -zxvf $2
+              fi
           }
           
           # invoke
@@ -95,15 +95,8 @@ jobs:
           cd ./kernel
 
           # fetch source
-          rm -rf KernelSU 2>/dev/null || true
-          git clone https://github.com/tiann/KernelSU
-
-          # disable update
-          sed -i '/^git.*pull$/d' ./KernelSU/kernel/setup.sh
-
-          # find latest tag
-          git -C KernelSU checkout $(git -C KernelSU log --tags --simplify-by-decoration --pretty=format:"%H" -1)
-          echo "KERNEL_SU_VERSION=$(git -C KernelSU tag -l --contains HEAD)" >> $GITHUB_ENV
+          [ ! -d KernelSU ] && \
+            git clone https://github.com/tiann/KernelSU
 
       - name: "kernelsu::patch"
         if: env.PATCH_KERNEL_SU == 'true'
@@ -117,7 +110,7 @@ jobs:
           echo "CONFIG_HAVE_KPROBES=y" >> arch/arm64/configs/$KERNEL_CONFIG
           echo "CONFIG_KPROBE_EVENTS=y" >> arch/arm64/configs/$KERNEL_CONFIG
           echo "CONFIG_OVERLAY_FS=y" >> arch/arm64/configs/$KERNEL_CONFIG
-          echo "KERNEL_SUFFIX=$KERNEL_SUFFIX-KernelSU-$KERNEL_SU_VERSION" >> $GITHUB_ENV
+          echo "KERNEL_SUFFIX=$KERNEL_SUFFIX-KernelSU" >> $GITHUB_ENV
       
       - name: "anykernel3::download"
         run: |
@@ -126,6 +119,7 @@ jobs:
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
           sed -i 's!block=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!block=auto;!g' AnyKernel3/anykernel.sh
           sed -i 's/is_slot_device=0;/is_slot_device=auto;/g' AnyKernel3/anykernel.sh
+          sed -i "s/^kernel.string=.*/kernel.string=${KERNEL_NAME}${{ env.KERNEL_SUFFIX }} by ${KBUILD_BUILD_USER} @ ${KBUILD_BUILD_HOST}/g" AnyKernel3/anykernel.sh
           rm -rf AnyKernel3/.git* AnyKernel3/README.md
 
           echo "AK3_PATH=$GITHUB_WORKSPACE/AnyKernel3" >> $GITHUB_ENV
