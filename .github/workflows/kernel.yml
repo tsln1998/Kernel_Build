@@ -119,6 +119,7 @@ jobs:
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
           sed -i 's!block=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!block=auto;!g' AnyKernel3/anykernel.sh
           sed -i 's/is_slot_device=0;/is_slot_device=auto;/g' AnyKernel3/anykernel.sh
+          sed -i "s/^kernel.string=.*/kernel.string=${KERNEL_NAME}${{ env.KERNEL_SUFFIX }} by ${KBUILD_BUILD_USER} @ ${KBUILD_BUILD_HOST}/g" AnyKernel3/anykernel.sh
           rm -rf AnyKernel3/.git* AnyKernel3/README.md
 
           echo "AK3_PATH=$GITHUB_WORKSPACE/AnyKernel3" >> $GITHUB_ENV
